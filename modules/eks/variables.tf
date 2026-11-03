@@ -72,6 +72,30 @@ variable "cluster_log_retention_days" {
   default     = 90
 }
 
+variable "addon_vpc_cni_version" {
+  description = "Version of the vpc-cni EKS add-on (null = AWS default version)."
+  type        = string
+  default     = null
+}
+
+variable "addon_coredns_version" {
+  description = "Version of the coredns EKS add-on (null = AWS default version)."
+  type        = string
+  default     = null
+}
+
+variable "addon_kube_proxy_version" {
+  description = "Version of the kube-proxy EKS add-on (null = AWS default version)."
+  type        = string
+  default     = null
+}
+
+variable "addon_ebs_csi_version" {
+  description = "Version of the aws-ebs-csi-driver EKS add-on (null = AWS default version)."
+  type        = string
+  default     = null
+}
+
 variable "tags" {
   description = "Tags to apply to all EKS resources."
   type        = map(string)

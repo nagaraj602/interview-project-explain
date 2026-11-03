@@ -577,3 +577,164 @@ resource "aws_iam_role_policy_attachment" "risk_engine_attach" {
   policy_arn = aws_iam_policy.risk_engine_policy.arn
   role       = aws_iam_role.risk_engine_irsa.name
 }
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Core EKS Add-ons with IRSA and Strict Sequential Upgrade Management
+# ---------------------------------------------------------------------------------------------------------------------
+
+# 1. VPC CNI IRSA Role
+resource "aws_iam_role" "vpc_cni_irsa" {
+  name = "${var.cluster_name}-vpc-cni-irsa"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "VpcCniOidc"
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.oidc.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub" = "system:serviceaccount:kube-system:aws-node"
+            "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:aud" = "sts.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = merge(
+    var.tags,
+    {
+      Name        = "${var.cluster_name}-vpc-cni-irsa"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    }
+  )
+}
+
+resource "aws_iam_role_policy_attachment" "vpc_cni_attach" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.vpc_cni_irsa.name
+}
+
+# Addon 1: VPC CNI (Step 1 of Addons - Must be upgraded first to support networking on newer nodes)
+resource "aws_eks_addon" "vpc_cni" {
+  cluster_name                = aws_eks_cluster.main.name
+  addon_name                  = "vpc-cni"
+  addon_version               = var.addon_vpc_cni_version
+  resolve_conflicts_on_update = "PRESERVE"
+  service_account_role_arn    = aws_iam_role.vpc_cni_irsa.arn
+
+  tags = merge(
+    var.tags,
+    {
+      Name        = "${var.cluster_name}-addon-vpc-cni"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    }
+  )
+
+  depends_on = [aws_iam_role_policy_attachment.vpc_cni_attach]
+}
+
+# Addon 2: Kube Proxy (Step 2 of Addons - Matches control plane minor version)
+resource "aws_eks_addon" "kube_proxy" {
+  cluster_name                = aws_eks_cluster.main.name
+  addon_name                  = "kube-proxy"
+  addon_version               = var.addon_kube_proxy_version
+  resolve_conflicts_on_update = "PRESERVE"
+
+  tags = merge(
+    var.tags,
+    {
+      Name        = "${var.cluster_name}-addon-kube-proxy"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    }
+  )
+}
+
+# Addon 3: CoreDNS (Step 3 of Addons - Requires running worker nodes to schedule DNS pods)
+resource "aws_eks_addon" "coredns" {
+  cluster_name                = aws_eks_cluster.main.name
+  addon_name                  = "coredns"
+  addon_version               = var.addon_coredns_version
+  resolve_conflicts_on_update = "PRESERVE"
+
+  tags = merge(
+    var.tags,
+    {
+      Name        = "${var.cluster_name}-addon-coredns"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    }
+  )
+
+  depends_on = [aws_eks_node_group.main]
+}
+
+# 2. EBS CSI Driver IRSA Role
+resource "aws_iam_role" "ebs_csi_irsa" {
+  name = "${var.cluster_name}-ebs-csi-irsa"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EbsCsiOidc"
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.oidc.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub" = "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+            "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:aud" = "sts.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = merge(
+    var.tags,
+    {
+      Name        = "${var.cluster_name}-ebs-csi-irsa"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    }
+  )
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi_attach" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  role       = aws_iam_role.ebs_csi_irsa.name
+}
+
+# Addon 4: EBS CSI Driver (Step 4 of Addons - CSI controller & node daemon for persistent storage)
+resource "aws_eks_addon" "ebs_csi" {
+  cluster_name                = aws_eks_cluster.main.name
+  addon_name                  = "aws-ebs-csi-driver"
+  addon_version               = var.addon_ebs_csi_version
+  resolve_conflicts_on_update = "PRESERVE"
+  service_account_role_arn    = aws_iam_role.ebs_csi_irsa.arn
+
+  tags = merge(
+    var.tags,
+    {
+      Name        = "${var.cluster_name}-addon-ebs-csi"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    }
+  )
+
+  depends_on = [
+    aws_eks_node_group.main,
+    aws_iam_role_policy_attachment.ebs_csi_attach
+  ]
+}

@@ -78,6 +78,18 @@ variable "skip_final_snapshot" {
   default     = false
 }
 
+variable "allow_major_version_upgrade" {
+  description = "Indicates that major version upgrades are allowed."
+  type        = bool
+  default     = true
+}
+
+variable "enable_blue_green_update" {
+  description = "Enables native Terraform/AWS RDS Blue/Green Deployment for zero-downtime upgrades."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Tags to apply to all RDS resources."
   type        = map(string)

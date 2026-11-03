@@ -232,9 +232,15 @@ resource "aws_db_instance" "main" {
   copy_tags_to_snapshot      = true
 
   # Protection & Lifecycle
-  deletion_protection       = var.deletion_protection
-  skip_final_snapshot       = var.skip_final_snapshot
-  final_snapshot_identifier = "${var.environment}-risk-db-final-snapshot"
+  deletion_protection         = var.deletion_protection
+  skip_final_snapshot         = var.skip_final_snapshot
+  final_snapshot_identifier   = "${var.environment}-risk-db-final-snapshot"
+  allow_major_version_upgrade = var.allow_major_version_upgrade
+
+  # Native Terraform RDS Blue/Green Deployment (Zero-Downtime Major Upgrades)
+  blue_green_update {
+    enabled = var.enable_blue_green_update
+  }
 
   # Performance Insights & CloudWatch Enhanced Monitoring
   performance_insights_enabled          = true

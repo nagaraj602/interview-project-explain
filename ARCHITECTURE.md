@@ -287,84 +287,224 @@ Any attempt by a compromised CI/CD runner to list other secrets, modify policies
 
 ### 8.1. EKS Cluster Upgrade Strategy (e.g., v1.35 -> v1.36)
 
-EKS upgrades must follow a strict sequential procedure to preserve 100% platform availability:
+EKS upgrades must follow an exact sequential procedure. Upgrading components out of order will result in networking collapse, cluster DNS outages, or node scheduling failures.
 
 ```mermaid
 flowchart TD
-    Step1["Phase 1: Pre-Upgrade Verification<br/>(Deprecations, API versions, PDBs)"] --> Step2["Phase 2: Control Plane Upgrade<br/>(Terraform: kubernetes_version = '1.36')"]
-    Step2 --> Step3["Phase 3: Core EKS Add-ons Upgrade<br/>(VPC CNI, CoreDNS, kube-proxy, EBS CSI)"]
-    Step3 --> Step4["Phase 4: Managed Node Group Rolling Update<br/>(Drain, Cordon, Surge 1-by-1)"]
-    Step4 --> Step5["Phase 5: Post-Upgrade Validation<br/>(Health check synthetic transactions)"]
+    Step1["Phase 1: Pre-Upgrade Validation<br/>(API deprecations, PDB headroom, capacity checks)"] --> Step2["Phase 2: Control Plane Upgrade<br/>(Terraform: kubernetes_version = '1.36')"]
+    Step2 --> Step3["Phase 3: Add-on Upgrade in Strict Order<br/>(1. vpc-cni ➔ 2. kube-proxy ➔ 3. coredns ➔ 4. ebs-csi)"]
+    Step3 --> Step4["Phase 4: Node Group Upgrade Strategy<br/>(Option A: In-Place Rolling Surge OR Option B: Blue/Green Dual MNG)"]
+    Step4 --> Step5["Phase 5: Post-Upgrade Verification<br/>(Synthetic risk transactions, DaemonSet health, DNS latency)"]
 ```
 
-#### Step 1: Pre-Upgrade API Version Check
-Execute Pluto or `kubectl krew deprecations` to scan existing Helm charts and manifests for deprecated Kubernetes APIs:
-```bash
-pluto detect-helm -o wide
-pluto detect-files -d ./k8s-manifests
-```
-Verify that all platform Pod Disruption Budgets (PDBs) have `allowedDisruptions >= 1`:
-```bash
-kubectl get pdb -A
-```
+#### Step 1: Pre-Upgrade API Version Check & Pod Disruption Budget Audit
+1. Execute Pluto or Kube-No-Trouble (`kubent`) to scan all cluster manifests and Helm releases for deprecated APIs removed in the target Kubernetes version:
+   ```bash
+   kubent -t 1.36.0
+   ```
+2. Audit all Pod Disruption Budgets (PDBs) to ensure that `allowedDisruptions >= 1`. If `minAvailable == replicas`, the eviction API will block forever:
+   ```bash
+   kubectl get pdb -A
+   ```
 
 #### Step 2: Control Plane Upgrade
-1. In the target environment (`environments/prod/variables.tf` or `terraform.tfvars`), update:
+1. In `environments/prod/terraform.tfvars`, bump the cluster version:
    ```hcl
    kubernetes_version = "1.36"
    ```
-2. Execute plan and apply:
+2. Execute the Terraform plan and apply:
    ```bash
-   terraform plan -out=tfplan
-   terraform apply tfplan
+   terraform plan -target=module.eks.aws_eks_cluster.main -out=control-plane.tfplan
+   terraform apply control-plane.tfplan
    ```
-   *AWS upgrades the control plane instances across AZs in a blue/green fashion. The Kubernetes API server remains reachable throughout the process.*
+   *AWS performs a blue/green upgrade of the managed control plane instances behind the private API endpoint. API server traffic experiences zero dropped packets.*
 
-#### Step 3: Upgrade In-Cluster Add-ons
-Immediately update core add-ons to match Kubernetes 1.36 specifications:
-- `vpc-cni`
-- `kube-proxy`
-- `coredns`
-- `aws-ebs-csi-driver`
+#### Step 3: Upgrade In-Cluster Add-ons in Strict Sequence
 
-#### Step 4: Managed Node Group Rolling Update
-When the EKS module detects an updated Kubernetes version or updated Launch Template AMI, AWS EKS Managed Node Groups orchestrate an automated rolling update:
-1. EKS provisions a replacement EC2 instance using the new AMI/version.
-2. The old node is **cordoned** (`SchedulingDisabled`).
-3. EKS issues a `kubectl drain` with a 15-minute grace period. Pods migrate to healthy nodes that satisfy PDB constraints.
-4. Once drained, the old node is terminated.
-5. The cycle repeats until all nodes in the node group are replaced.
+Add-ons cannot be updated simultaneously; they have strict functional interdependencies:
+
+| Sequence | Add-on | Why this specific order? | Terraform & IRSA Mechanism |
+|---|---|---|---|
+| **1st** | **`vpc-cni`** | Must be updated **first** because newer Kubernetes versions introduce new CNI features (e.g., network policy enforcement, prefix delegation). If newer worker nodes boot with an old CNI, they cannot allocate pod IPs. | `aws_eks_addon.vpc_cni`<br/>`service_account_role_arn = aws_iam_role.vpc_cni_irsa.arn`<br/>`resolve_conflicts_on_update = "PRESERVE"` |
+| **2nd** | **`kube-proxy`** | Must match the minor version of the API Server (1.36) to properly interpret newer iptables / IPVS routing rules and dual-stack endpoint slices. | `aws_eks_addon.kube_proxy`<br/>`resolve_conflicts_on_update = "PRESERVE"` |
+| **3rd** | **`coredns`** | `coredns` pods depend on `kube-proxy` for service routing and require running worker nodes to host the pods. | `aws_eks_addon.coredns`<br/>`resolve_conflicts_on_update = "PRESERVE"`<br/>`depends_on = [aws_eks_node_group.main]` |
+| **4th** | **`aws-ebs-csi-driver`** | Handles persistent storage attachment. Upgraded last so running database / risk analytics pods maintain unbroken volume attachments. | `aws_eks_addon.ebs_csi`<br/>`service_account_role_arn = aws_iam_role.ebs_csi_irsa.arn`<br/>`resolve_conflicts_on_update = "PRESERVE"` |
+
+##### How to Query and Update Add-on Versions in Terraform:
+Check available compatible versions for the target Kubernetes version:
+```bash
+aws eks describe-addon-versions \
+  --kubernetes-version 1.36 \
+  --region us-east-1 \
+  --query 'addons[].{Name: addonName, Versions: addonVersions[].addonVersion}'
+```
+In Terraform, pass the verified versions into `environments/prod/main.tf`:
+```hcl
+module "eks" {
+  source = "../../modules/eks"
+  
+  kubernetes_version        = "1.36"
+  addon_vpc_cni_version     = "v1.18.3-eksbuild.1"
+  addon_kube_proxy_version  = "v1.36.0-eksbuild.1"
+  addon_coredns_version     = "v1.11.3-eksbuild.1"
+  addon_ebs_csi_version     = "v1.35.0-eksbuild.1"
+  # ...
+}
+```
+*Note on `resolve_conflicts_on_update = "PRESERVE"`*: This ensures any customized daemon resource limits, environment variables (e.g. `WARM_IP_TARGET`), or node tolerations previously applied to the add-ons are not overwritten by AWS defaults.
 
 ---
 
-### 8.2. RDS PostgreSQL Upgrade Strategy
+#### Step 4: Worker Node Group Upgrade Strategies
 
-#### Minor Version Upgrades (e.g., 16.4 -> 16.5)
-- Automated minor version upgrades are enabled (`auto_minor_version_upgrade = true`).
-- AWS applies minor security patches during the configured weekly maintenance window (`Sun:04:30-Sun:05:30 UTC`).
-- For Multi-AZ instances, RDS upgrades the standby host first, fails over to the standby, and then upgrades the former primary, keeping downtime under **120 seconds**.
+In a senior infrastructure role, you must articulate two distinct strategies for upgrading node groups, along with their respective trade-offs:
 
-#### Major Version Upgrades (e.g., PostgreSQL 16 -> PostgreSQL 17)
-For zero-downtime or near-zero-downtime major version migrations in production:
-1. **AWS RDS Blue/Green Deployment (Recommended)**:
-   - Create an RDS Blue/Green Deployment via AWS Console or CLI:
-     ```bash
-     aws rds create-blue-green-deployment \
-       --blue-green-deployment-name risk-db-pg17-upgrade \
-       --source arn:aws:rds:us-east-1:123456789012:db:prod-risk-detection-db \
-       --target-engine-version 17.0
-     ```
-   - RDS creates a fully synchronized "Green" copy running PostgreSQL 17 with replication active.
-   - Run integration and performance regression tests against the Green database.
-   - Switch over traffic:
-     ```bash
-     aws rds switchover-blue-green-deployment \
-       --blue-green-deployment-id bgd-xxxxxx \
-       --switchover-timeout 300
-     ```
-   - Traffic cutover typically takes **under 30 seconds** with zero data loss.
-2. **Terraform Reconciliation**:
-   Once the green environment is promoted, update `engine_version = "17.0"` in `environments/prod/terraform.tfvars` and run `terraform refresh` to synchronize the state file.
+##### Strategy A: In-Place Managed Node Group Rolling Upgrade (Standard Automated Path)
+EKS Managed Node Groups provide native rolling updates controlled via `update_config`:
+```hcl
+update_config {
+  max_unavailable = 1 # Or max_unavailable_percentage = 25
+}
+```
+**Under the Hood Mechanics**:
+1. **Surge Node Launch**: EKS commands the Auto Scaling Group (ASG) to increase capacity by launching a new EC2 instance running the updated Launch Template / AMI.
+2. **Readiness Verification**: EKS waits until the new node is registered, passes kubelet health checks, and reports `Ready`.
+3. **Cordoning**: EKS marks the oldest node as unschedulable (`kubectl cordon`).
+4. **Drain & Eviction**: EKS issues eviction API requests for all pods on the cordoned node.
+   - **Pod Disruption Budget Respect**: EKS will not evict a pod if it violates the active PDB (`minAvailable: 2`). Eviction pauses until replacement pods on the new node pass their readiness probes.
+   - **Drain Timeout**: EKS enforces a 15-minute drain timeout. If pods cannot be evicted within this window, the update halts, leaving existing healthy nodes untouched.
+5. **Termination**: The drained node is terminated, and the ASG size decreases back to desired.
+6. The process repeats iteratively until all nodes in the group are replaced.
+
+##### Strategy B: Blue/Green (Canary) Dual Node Group Upgrade (Zero-Risk Enterprise Standard)
+For mission-critical risk and fraud processing where an in-place failure halfway through rollout cannot be tolerated, enterprise teams use the **Dual Node Group Blue/Green pattern in Terraform**:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant TF as Terraform
+    participant Blue as MNG-Blue (K8s 1.35)
+    participant Green as MNG-Green (K8s 1.36)
+    participant Workloads as Risk Detection Pods
+
+    TF->>Green: 1. Deploy MNG-Green via Terraform apply
+    Note over Green: Both node groups active simultaneously
+    TF->>Blue: 2. Cordon MNG-Blue (kubectl cordon -l role=blue)
+    TF->>Blue: 3. Drain MNG-Blue nodes 1-by-1
+    Workloads->>Green: 4. Pods reschedule onto MNG-Green
+    Note over Workloads,Green: 5. 24-Hour Soak Test & Latency Verification
+    alt Anomaly Detected?
+        TF->>Blue: Uncordon MNG-Blue (Instant 0-downtime rollback!)
+    else Health Verified
+        TF->>Blue: 6. Remove MNG-Blue from Terraform & destroy
+    end
+```
+
+**Step-by-Step Execution**:
+1. In `environments/prod/main.tf`, declare a temporary second node group (`node_group_green`) with `kubernetes_version = "1.36"` while keeping `node_group_blue` (`1.35`) running.
+2. Run `terraform apply` to provision the green cluster nodes.
+3. Cordon the old blue nodes so no new pods can schedule on them:
+   ```bash
+   kubectl cordon -l eks.amazonaws.com/nodegroup=prod-risk-eks-mng-blue
+   ```
+4. Gracefully drain the blue nodes:
+   ```bash
+   kubectl drain -l eks.amazonaws.com/nodegroup=prod-risk-eks-mng-blue \
+     --ignore-daemonsets \
+     --delete-emptydir-data \
+     --grace-period=60
+   ```
+5. Run synthetic payment fraud payloads against the platform to verify zero error rates and latency SLAs.
+6. **Instant Rollback**: If an OS or kernel bug surfaces, simply run `kubectl uncordon` on the blue nodes; pods can immediately shift back.
+7. Once verified, delete the `node_group_blue` block from Terraform and run `terraform apply`.
+
+---
+
+### 8.2. RDS PostgreSQL Major Upgrades: Native Terraform vs AWS CLI / Blue-Green
+
+An interviewer will frequently ask:  
+*"We are using Terraform for RDS, so why would anyone use an AWS CLI command or AWS Console for a Blue/Green deployment instead of doing it 100% inside Terraform?"*
+
+The answer lies in the fundamental difference between **pure declarative automation** and **real-world database operational governance**.
+
+#### Option 1: The 100% Declarative Terraform Approach (`blue_green_update`)
+
+In the Terraform AWS Provider (v5.0+), AWS RDS Blue/Green Deployments are supported **natively** right inside the `aws_db_instance` resource:
+
+```hcl
+resource "aws_db_instance" "main" {
+  identifier                  = "prod-risk-detection-db"
+  engine                      = "postgres"
+  engine_version              = "17.1" # Bumped from 16.4
+  allow_major_version_upgrade = true
+
+  # Native Terraform RDS Blue/Green Deployment
+  blue_green_update {
+    enabled = true
+  }
+  # ...
+}
+```
+
+##### How Native Terraform Executes It:
+1. When you bump `engine_version` to `17.1` and execute `terraform apply`, Terraform calls the AWS RDS API to spin up the isolated **Green database environment**.
+2. Terraform waits while AWS configures physical/logical replication from Blue to Green.
+3. Once caught up, Terraform triggers the **automated switchover** (redirecting traffic by swapping the underlying instance identifiers and DNS endpoints).
+4. Terraform finishes the apply without any state drift.
+
+---
+
+#### Option 2: The Decoupled Operational Approach (AWS CLI / Console + `terraform refresh`)
+
+Why do Senior Infrastructure Engineers and Database Administrators (DBAs) in financial institutions frequently **prefer** using the AWS CLI or Console over pure `terraform apply` for major database version bumps?
+
+There are **three critical enterprise realities**:
+
+##### 1. CI/CD Pipeline Execution Timeouts
+- In large risk platforms, database storage is hundreds of gigabytes or multiple terabytes.
+- Setting up the Green instance, taking the snapshot, restoring it, and catching up replication logs can take **60 to 180 minutes**.
+- Automated CI/CD systems (GitHub Actions, GitLab CI, Jenkins, Terraform Cloud) generally enforce a **60-minute timeout limit**.
+- A timed-out `terraform apply` during a live database upgrade leaves the Terraform state lock acquired and leaves the infrastructure team blind to whether the switchover succeeded or was abandoned.
+
+##### 2. The Multi-Day "Soak & Smoke Test" Window
+- With native Terraform, `terraform apply` is a **monolithic operation**: it creates Green, waits for sync, and immediately performs switchover in one continuous blocking step.
+- In production banking/risk platforms, DBAs demand a **pre-switchover validation window**:
+  - Keep the Green database running PostgreSQL 17 in staging for **2 to 3 days**.
+  - Run read-only benchmark queries against the Green endpoint to detect execution plan regressions.
+  - Test custom PostgreSQL extensions (`pg_stat_statements`, `pgcrypto`) on the new engine version.
+  - Verify that application connection pools (e.g., PgBouncer) handle the new engine handshake.
+- Pure declarative Terraform cannot easily "pause" for 48 hours in the middle of a `terraform apply`.
+
+##### 3. Maintenance Window Governance (Change Advisory Board - CAB)
+- The replication can be prepared on Wednesday during business hours.
+- The actual 30-second switchover is scheduled for Sunday at 03:00 AM UTC during the maintenance window.
+- Decoupling creation from switchover gives the on-call engineer total control over the exact second traffic switches.
+
+##### Step-by-Step Procedure for the Decoupled Operational Approach:
+1. **Provision Green Environment (Ahead of time)**:
+   ```bash
+   aws rds create-blue-green-deployment \
+     --blue-green-deployment-name risk-db-pg17-upgrade \
+     --source $(terraform output -raw rds_instance_arn) \
+     --target-engine-version 17.1 \
+     --target-db-parameter-group-name prod-rds-pg17-params
+   ```
+2. **Execute Smoke Tests against Green Target**:
+   Connect to the target Green endpoint and run query regression suites.
+3. **Trigger Switchover during Approved Window**:
+   ```bash
+   aws rds switchover-blue-green-deployment \
+     --blue-green-deployment-id bgd-xxxxxx \
+     --switchover-timeout 120
+   ```
+   *AWS changes the DNS record and swaps identifiers. Total application downtime is typically 15 to 30 seconds.*
+4. **Reconcile Terraform State**:
+   Once the switchover completes, update `engine_version = "17.1"` in `environments/prod/terraform.tfvars`, then run:
+   ```bash
+   terraform refresh
+   terraform plan # Validates 0 changes required!
+   ```
+   Terraform cleanly adopts the promoted Green instance without deleting or recreating the database.
 
 ---
 
