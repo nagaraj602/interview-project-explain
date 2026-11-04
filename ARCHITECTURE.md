@@ -16,35 +16,33 @@ Due to the sensitive nature of financial telemetry and regulatory standards (PCI
 
 ## 2. Directory Structure & Module Boundaries
 
-The repository follows a clean separation between **reusable, composable standard modules** and **environment-specific execution roots**. Each environment (`dev`, `staging`, `prod`) maintains an isolated state file, preventing failure blast radiuses from propagating across boundaries.
+The repository follows a clean separation between **reusable, composable standard modules** and **environment-specific execution roots**. To achieve maximum **cost optimization** without sacrificing production reliability, the platform adopts a **2-Cluster Architecture**:
+- **Cluster 1 (`nonprod-risk-eks`)**: Combines Development and Staging workloads onto a single shared EKS cluster using Kubernetes native multi-tenancy (Namespaces `risk-dev` and `risk-staging`, NetworkPolicies, and ResourceQuotas). Uses Spot instances and a single NAT Gateway to save over ~$250/month.
+- **Cluster 2 (`prod-risk-eks`)**: Dedicated, air-gapped EKS cluster with 3-AZ NAT redundancy, Multi-AZ RDS PostgreSQL (`db.r6g.xlarge`), and strict PCI-DSS isolation.
 
 ```
 .
 ├── ARCHITECTURE.md                           # System architecture & operational runbooks
 ├── environments/
 │   ├── bootstrap/                            # Remote S3 backend state bootstrap tier
-│   │   ├── main.tf                           # Module instantiations for backend state buckets
+│   │   ├── main.tf                           # Module instantiations for backend state buckets (nonprod, prod)
 │   │   ├── variables.tf                      # Region, prefix, and environment inputs
 │   │   ├── outputs.tf                        # Exposed S3 ARNs and KMS CMK attributes
-│   │   ├── terraform.tfvars                  # Concrete bootstrap variables
+│   │   ├── terraform.tfvars                  # Concrete bootstrap variables (nonprod, prod)
 │   │   └── versions.tf                       # Local state provider requirements
-│   ├── dev/                                  # Development environment
-│   │   ├── backend.tf                        # TF 1.10+ native S3 backend declaration
-│   │   ├── main.tf                           # Module instantiations for dev
-│   │   ├── variables.tf                      # Dev input variables & defaults
-│   │   ├── outputs.tf                        # Exposed dev endpoints and ARNs
-│   │   ├── terraform.tfvars                  # Concrete dev configuration values
-│   │   └── versions.tf                       # Provider requirements & AWS config
-│   ├── staging/                              # Staging / Pre-production environment
-│   │   ├── backend.tf                        # TF 1.10+ native S3 backend declaration
-│   │   ├── main.tf                           # Module instantiations for staging
-│   │   ├── variables.tf                      # Staging input variables & defaults
-│   │   ├── outputs.tf                        # Exposed staging endpoints and ARNs
-│   │   ├── terraform.tfvars                  # Concrete staging configuration values
-│   │   └── versions.tf                       # Provider requirements & AWS config
-│   └── prod/                                 # Production environment
-│       ├── backend.tf                        # TF 1.10+ native S3 backend declaration
-│       ├── main.tf                           # Module instantiations for prod (HA)
+│   ├── nonprod/                              # Consolidated Non-Production environment (Dev + Staging)
+│   │   ├── backend.tf                        # TF 1.10+ native S3 backend declaration (marketplace-risk-tfstate-nonprod)
+│   │   ├── main.tf                           # Module instantiations: Shared VPC, nonprod EKS, Dev RDS & Staging RDS
+│   │   ├── variables.tf                      # Nonprod input variables & cost-optimized defaults
+│   │   ├── outputs.tf                        # Exposed nonprod endpoints, IRSA roles, and ARNs
+│   │   ├── terraform.tfvars                  # Concrete nonprod configuration values (Spot nodes, Single NAT GW)
+│   │   ├── versions.tf                       # Provider requirements & AWS config
+│   │   └── k8s/                              # Multi-tenant Kubernetes isolation specifications
+│   │       ├── namespaces-and-quotas.yaml    # risk-dev & risk-staging namespaces with ResourceQuotas
+│   │       └── network-policies.yaml         # Strict zero-trust inter-namespace traffic blocking
+│   └── prod/                                 # Production environment (Fully Isolated 3-AZ HA)
+│       ├── backend.tf                        # TF 1.10+ native S3 backend declaration (marketplace-risk-tfstate-prod)
+│       ├── main.tf                           # Module instantiations for prod (HA Multi-AZ RDS, 3x NAT GWs)
 │       ├── variables.tf                      # Production input variables & defaults
 │       ├── outputs.tf                        # Exposed prod endpoints and ARNs
 │       ├── terraform.tfvars                  # Concrete prod configuration values
@@ -149,7 +147,7 @@ flowchart TD
 
 ### NAT Gateway Resiliency Model
 - **Production (`prod`)**: Deploys **three independent NAT Gateways** (one per AZ). If an AWS data center or AZ suffers a major fiber cut or power loss, workloads in the remaining two AZs maintain undisturbed outbound connectivity.
-- **Non-Production (`dev`)**: Uses `single_nat_gateway = true`, routing all private subnets through a single NAT Gateway located in AZ 1. This retains identical routing behavior while saving ~$65/month per eliminated NAT Gateway.
+- **Non-Production (`nonprod`)**: Uses `single_nat_gateway = true`, routing all private subnets for both dev and staging workloads through a single NAT Gateway located in AZ 1. This retains identical routing behavior while saving ~$130/month across nonprod.
 
 ### Security Baselines & Defense-in-Depth
 1. **Default Security Group Neutralization (CIS Benchmark 5.4)**: The VPC default security group (`aws_default_security_group.default`) has all inbound and outbound rules purged, ensuring that any unassigned resource is completely quarantined by default.

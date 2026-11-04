@@ -3,8 +3,8 @@
 # ---------------------------------------------------------------------------------------------------------------------
 terraform {
   backend "s3" {
-    bucket       = "marketplace-risk-tfstate-staging"
-    key          = "staging/terraform.tfstate"
+    bucket       = "marketplace-risk-tfstate-nonprod"
+    key          = "nonprod/terraform.tfstate"
     region       = "us-east-1"
     encrypt      = true
     use_lockfile = true

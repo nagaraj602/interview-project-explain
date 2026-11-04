@@ -5,9 +5,9 @@ variable "aws_region" {
 }
 
 variable "environments" {
-  description = "List of environments to provision S3 backend state buckets for."
+  description = "List of environments to provision S3 backend state buckets for (nonprod, prod)."
   type        = list(string)
-  default     = ["dev", "staging", "prod"]
+  default     = ["nonprod", "prod"]
 }
 
 variable "bucket_prefix" {

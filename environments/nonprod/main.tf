@@ -1,30 +1,35 @@
 # =====================================================================================================================
-# STAGING ENVIRONMENT: MARKETPLACE RISK DETECTION PLATFORM
+# NON-PRODUCTION ENVIRONMENT (DEV + STAGING CONSOLIDATED)
+# Cost-Optimized 2-Cluster Architecture:
+# - 1 Shared VPC with single NAT Gateway (Saves ~$130/month)
+# - 1 Shared EKS Kubernetes Cluster with Spot instances (Saves ~$73/month control plane + ~70% EC2)
+# - Kubernetes Namespace Separation (risk-dev vs risk-staging) with NetworkPolicies and ResourceQuotas
+# - Independent Dev and Staging PostgreSQL Databases (Single-AZ Graviton t4g for extreme cost efficiency)
 # =====================================================================================================================
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Module: VPC Networking Tier
+# Module: Shared VPC Networking Tier
 # ---------------------------------------------------------------------------------------------------------------------
 module "vpc" {
   source = "../../modules/vpc"
 
-  environment           = var.environment
   vpc_cidr              = var.vpc_cidr
-  cluster_name          = var.cluster_name
+  environment           = var.environment
   public_subnet_cidrs   = var.public_subnet_cidrs
   private_subnet_cidrs  = var.private_subnet_cidrs
   database_subnet_cidrs = var.database_subnet_cidrs
   single_nat_gateway    = var.single_nat_gateway
-  enable_flow_logs      = true
+  cluster_name          = var.cluster_name
 
   tags = {
     Environment = var.environment
     Tier        = "networking"
+    Scope       = "shared-nonprod"
   }
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Module: EKS Kubernetes Cluster (v1.35) - Private Endpoint Only
+# Module: Consolidated EKS Kubernetes Cluster (v1.35) - Hosts both Dev and Staging Workloads
 # ---------------------------------------------------------------------------------------------------------------------
 module "eks" {
   source = "../../modules/eks"
@@ -36,7 +41,7 @@ module "eks" {
   private_subnet_ids = module.vpc.private_subnet_ids
 
   instance_types  = var.eks_instance_types
-  capacity_type   = "ON_DEMAND"
+  capacity_type   = var.eks_capacity_type
   desired_size    = var.eks_desired_size
   min_size        = var.eks_min_size
   max_size        = var.eks_max_size
@@ -45,48 +50,80 @@ module "eks" {
   tags = {
     Environment = var.environment
     Tier        = "compute"
+    Scope       = "shared-nonprod"
+    Workloads   = "dev-and-staging"
   }
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Module: RDS PostgreSQL Database - Multi-AZ, 14-Day Retention, Storage Autoscaling, Secrets Manager
+# Module: Dev PostgreSQL Database (Cost-Optimized Single-AZ ARM Graviton)
 # ---------------------------------------------------------------------------------------------------------------------
-module "rds" {
+module "rds_dev" {
   source = "../../modules/rds"
 
-  environment                = var.environment
+  environment                = "dev"
   vpc_id                     = module.vpc.vpc_id
   db_subnet_group_name       = module.vpc.db_subnet_group_name
   eks_node_security_group_id = module.eks.node_security_group_id
 
-  db_name                 = "marketplaceriskstaging"
-  db_username             = "risk_staging_admin"
-  instance_class          = var.rds_instance_class
+  db_name                 = "marketplaceriskdev"
+  db_username             = "risk_dev_admin"
+  instance_class          = var.rds_dev_instance_class
   allocated_storage       = var.rds_allocated_storage
   max_allocated_storage   = var.rds_max_allocated_storage
-  multi_az                = var.rds_multi_az
+  multi_az                = false
   backup_retention_period = var.backup_retention_period
 
   deletion_protection = var.rds_deletion_protection
   skip_final_snapshot = var.rds_skip_final_snapshot
 
   tags = {
-    Environment = var.environment
+    Environment = "dev"
     Tier        = "database"
+    Parent      = var.environment
   }
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Module: IAM Instance Profile & CI/CD Credentials Secret
+# Module: Staging PostgreSQL Database (Pre-production testing Single-AZ ARM Graviton)
+# ---------------------------------------------------------------------------------------------------------------------
+module "rds_staging" {
+  source = "../../modules/rds"
+
+  environment                = "staging"
+  vpc_id                     = module.vpc.vpc_id
+  db_subnet_group_name       = module.vpc.db_subnet_group_name
+  eks_node_security_group_id = module.eks.node_security_group_id
+
+  db_name                 = "marketplaceriskstaging"
+  db_username             = "risk_staging_admin"
+  instance_class          = var.rds_staging_instance_class
+  allocated_storage       = var.rds_allocated_storage
+  max_allocated_storage   = var.rds_max_allocated_storage
+  multi_az                = var.rds_staging_multi_az
+  backup_retention_period = var.backup_retention_period
+
+  deletion_protection = var.rds_deletion_protection
+  skip_final_snapshot = var.rds_skip_final_snapshot
+
+  tags = {
+    Environment = "staging"
+    Tier        = "database"
+    Parent      = var.environment
+  }
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Module: CI/CD Deployment Credentials & IAM Instance Profile
 # ---------------------------------------------------------------------------------------------------------------------
 module "iam_secrets" {
   source = "../../modules/iam-secrets"
 
-  environment        = var.environment
-  secret_name_prefix = "cicd/deployment-credentials"
+  environment = var.environment
 
   tags = {
     Environment = var.environment
     Tier        = "security"
+    Scope       = "shared-nonprod"
   }
 }

@@ -1,0 +1,50 @@
+# =====================================================================================================================
+# NETWORK POLICIES: STRICT INTER-NAMESPACE ISOLATION BETWEEN DEV AND STAGING
+# Enforces complete traffic segmentation inside the shared non-production cluster.
+# =====================================================================================================================
+
+---
+# ---------------------------------------------------------------------------------------------------------------------
+# Dev: Deny all ingress from other namespaces except itself and kube-system (DNS)
+# ---------------------------------------------------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: isolate-dev-namespace
+  namespace: risk-dev
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow intra-namespace traffic
+    - from:
+        - podSelector: {}
+    # Allow traffic from ingress controllers if running in ingress-nginx namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+
+---
+# ---------------------------------------------------------------------------------------------------------------------
+# Staging: Deny all ingress from Dev pods
+# ---------------------------------------------------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: isolate-staging-namespace
+  namespace: risk-staging
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow intra-namespace traffic
+    - from:
+        - podSelector: {}
+    # Allow traffic from ingress controllers
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx

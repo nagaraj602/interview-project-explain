@@ -1,0 +1,92 @@
+# =====================================================================================================================
+# KUBERNETES NAMESPACE SEPARATION, RESOURCE QUOTAS & LIMIT RANGES (NONPROD CLUSTER)
+# =====================================================================================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: risk-dev
+  labels:
+    environment: dev
+    tier: nonprod-shared
+    pod-security.kubernetes.io/enforce: restricted
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: risk-staging
+  labels:
+    environment: staging
+    tier: nonprod-shared
+    pod-security.kubernetes.io/enforce: restricted
+
+---
+# ---------------------------------------------------------------------------------------------------------------------
+# Dev Namespace Resource Quota (Prevents Dev runaway pods from starving Staging)
+# ---------------------------------------------------------------------------------------------------------------------
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dev-quota
+  namespace: risk-dev
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "30"
+
+---
+# ---------------------------------------------------------------------------------------------------------------------
+# Staging Namespace Resource Quota (Guarantees capacity for pre-production load testing)
+# ---------------------------------------------------------------------------------------------------------------------
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: staging-quota
+  namespace: risk-staging
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+    pods: "60"
+
+---
+# ---------------------------------------------------------------------------------------------------------------------
+# LimitRange: Sets sensible container defaults and limits per pod
+# ---------------------------------------------------------------------------------------------------------------------
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: nonprod-default-limits
+  namespace: risk-dev
+spec:
+  limits:
+    - default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      type: Container
+
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: nonprod-default-limits
+  namespace: risk-staging
+spec:
+  limits:
+    - default:
+        cpu: 1000m
+        memory: 1Gi
+      defaultRequest:
+        cpu: 250m
+        memory: 256Mi
+      type: Container

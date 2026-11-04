@@ -6,16 +6,15 @@ Production-ready, highly available, and security-hardened Infrastructure as Code
 Detailed architectural specifications, networking topologies, and operational upgrade runbooks are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Codebase Organization
-Directory-based environment separation utilizing standardized modules:
+Cost-optimized 2-Cluster architecture with directory-based environment separation:
 
 ```
 .
 ├── ARCHITECTURE.md                  # Complete architectural & operational specification
 ├── environments/
 │   ├── bootstrap/                   # Independent state backend provisioning (S3 + KMS)
-│   ├── dev/                         # Development environment (single NAT GW, scalable sizing)
-│   ├── staging/                     # Staging environment (pre-production parity)
-│   └── prod/                        # Production environment (full 3-AZ Multi-NAT HA)
+│   ├── nonprod/                     # Consolidated Dev + Staging cluster (Single NAT GW, Spot nodes, K8s namespace isolation)
+│   └── prod/                        # Dedicated Production cluster (3-AZ Multi-NAT HA, Multi-AZ RDS)
 └── modules/
     ├── s3-backend/                  # Terraform 1.10+ native S3 state locking (No DynamoDB)
     ├── vpc/                         # 3-tier subnets across 3 AZs, NAT GWs, Flow Logs, locked SG
