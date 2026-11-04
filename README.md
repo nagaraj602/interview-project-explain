@@ -12,6 +12,7 @@ Directory-based environment separation utilizing standardized modules:
 .
 ├── ARCHITECTURE.md                  # Complete architectural & operational specification
 ├── environments/
+│   ├── bootstrap/                   # Independent state backend provisioning (S3 + KMS)
 │   ├── dev/                         # Development environment (single NAT GW, scalable sizing)
 │   ├── staging/                     # Staging environment (pre-production parity)
 │   └── prod/                        # Production environment (full 3-AZ Multi-NAT HA)
@@ -30,18 +31,28 @@ Directory-based environment separation utilizing standardized modules:
 terraform fmt -check -recursive
 ```
 
-### 2. Initialize and Validate an Environment
+### 2. Bootstrap Remote S3 Backend Buckets
+To resolve the chicken-and-egg dependency, provision the remote state buckets and KMS keys first:
 ```bash
-cd environments/prod
-terraform init -backend=false
-terraform validate
-```
-
-### 3. Deploy with Terraform 1.10+ Native Locking
-```bash
-cd environments/prod
+cd environments/bootstrap
 terraform init
 terraform plan -out=tfplan
 terraform apply tfplan
 ```
-*(State locking is automatically handled natively by Amazon S3 via `use_lockfile = true` without requiring DynamoDB).*
+
+### 3. Initialize and Validate an Environment
+```bash
+cd ../prod
+terraform init -backend=false
+terraform validate
+```
+
+### 4. Deploy with Terraform 1.10+ Native Locking
+Once backend buckets exist, initialize the remote backend and deploy:
+```bash
+cd ../prod
+terraform init
+terraform plan -out=tfplan
+terraform apply tfplan
+```
+*(State locking is automatically handled natively by Amazon S3 via `use_lockfile = true` in `backend.tf` without requiring DynamoDB).*

@@ -22,24 +22,33 @@ The repository follows a clean separation between **reusable, composable standar
 .
 ├── ARCHITECTURE.md                           # System architecture & operational runbooks
 ├── environments/
+│   ├── bootstrap/                            # Remote S3 backend state bootstrap tier
+│   │   ├── main.tf                           # Module instantiations for backend state buckets
+│   │   ├── variables.tf                      # Region, prefix, and environment inputs
+│   │   ├── outputs.tf                        # Exposed S3 ARNs and KMS CMK attributes
+│   │   ├── terraform.tfvars                  # Concrete bootstrap variables
+│   │   └── versions.tf                       # Local state provider requirements
 │   ├── dev/                                  # Development environment
+│   │   ├── backend.tf                        # TF 1.10+ native S3 backend declaration
 │   │   ├── main.tf                           # Module instantiations for dev
 │   │   ├── variables.tf                      # Dev input variables & defaults
 │   │   ├── outputs.tf                        # Exposed dev endpoints and ARNs
 │   │   ├── terraform.tfvars                  # Concrete dev configuration values
-│   │   └── versions.tf                       # TF 1.10+ native S3 backend declaration
+│   │   └── versions.tf                       # Provider requirements & AWS config
 │   ├── staging/                              # Staging / Pre-production environment
+│   │   ├── backend.tf                        # TF 1.10+ native S3 backend declaration
 │   │   ├── main.tf                           # Module instantiations for staging
 │   │   ├── variables.tf                      # Staging input variables & defaults
 │   │   ├── outputs.tf                        # Exposed staging endpoints and ARNs
 │   │   ├── terraform.tfvars                  # Concrete staging configuration values
-│   │   └── versions.tf                       # TF 1.10+ native S3 backend declaration
+│   │   └── versions.tf                       # Provider requirements & AWS config
 │   └── prod/                                 # Production environment
+│       ├── backend.tf                        # TF 1.10+ native S3 backend declaration
 │       ├── main.tf                           # Module instantiations for prod (HA)
 │       ├── variables.tf                      # Production input variables & defaults
 │       ├── outputs.tf                        # Exposed prod endpoints and ARNs
 │       ├── terraform.tfvars                  # Concrete prod configuration values
-│       └── versions.tf                       # TF 1.10+ native S3 backend declaration
+│       └── versions.tf                       # Provider requirements & AWS config
 └── modules/
     ├── s3-backend/                           # S3 state bucket with native conditional locking
     │   ├── main.tf
