@@ -69,8 +69,8 @@ module "rds" {
   multi_az                = var.rds_multi_az
   backup_retention_period = var.backup_retention_period
 
-  deletion_protection = true  # Hardened protection against accidental deletion
-  skip_final_snapshot = false # Guaranteed final snapshot on any lifecycle termination
+  deletion_protection = var.rds_deletion_protection
+  skip_final_snapshot = var.rds_skip_final_snapshot
 
   tags = {
     Environment = var.environment

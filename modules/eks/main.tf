@@ -91,7 +91,10 @@ resource "aws_kms_key" "ebs" {
         Sid    = "AllowAutoScalingAndEKSKmsGrant"
         Effect = "Allow"
         Principal = {
-          AWS = aws_iam_role.node.arn
+          AWS = [
+            aws_iam_role.node.arn,
+            "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+          ]
         }
         Action = [
           "kms:Encrypt",
@@ -106,7 +109,10 @@ resource "aws_kms_key" "ebs" {
         Sid    = "AllowAttachmentPersistentResources"
         Effect = "Allow"
         Principal = {
-          AWS = aws_iam_role.node.arn
+          AWS = [
+            aws_iam_role.node.arn,
+            "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+          ]
         }
         Action = [
           "kms:CreateGrant"
@@ -411,7 +417,7 @@ resource "aws_launch_template" "node" {
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
-    http_put_response_hop_limit = 1
+    http_put_response_hop_limit = 2
     instance_metadata_tags      = "enabled"
   }
 

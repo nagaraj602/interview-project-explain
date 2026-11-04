@@ -9,7 +9,7 @@ module "s3_backend" {
   bucket_name                       = "${var.bucket_prefix}-${each.key}"
   environment                       = each.key
   kms_key_description               = "KMS Key for Terraform State Storage (${each.key})"
-  force_destroy                     = false
+  force_destroy                     = true
   noncurrent_version_retention_days = var.noncurrent_version_retention_days
 
   tags = {
