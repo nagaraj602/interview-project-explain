@@ -125,6 +125,12 @@ variable "backup_retention_period" {
   default     = 7
 }
 
+variable "rds_engine_version" {
+  description = "PostgreSQL engine version for nonprod databases."
+  type        = string
+  default     = "16.4"
+}
+
 variable "rds_deletion_protection" {
   description = "Enable deletion protection on RDS PostgreSQL (set to false for test teardown)."
   type        = bool

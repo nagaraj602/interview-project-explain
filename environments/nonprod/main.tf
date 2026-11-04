@@ -68,6 +68,7 @@ module "rds_dev" {
 
   db_name                 = "marketplaceriskdev"
   db_username             = "risk_dev_admin"
+  engine_version          = var.rds_engine_version
   instance_class          = var.rds_dev_instance_class
   allocated_storage       = var.rds_allocated_storage
   max_allocated_storage   = var.rds_max_allocated_storage
@@ -76,6 +77,7 @@ module "rds_dev" {
 
   deletion_protection = var.rds_deletion_protection
   skip_final_snapshot = var.rds_skip_final_snapshot
+  enable_blue_green_update = false
 
   tags = {
     Environment = "dev"
@@ -97,6 +99,7 @@ module "rds_staging" {
 
   db_name                 = "marketplaceriskstaging"
   db_username             = "risk_staging_admin"
+  engine_version          = var.rds_engine_version
   instance_class          = var.rds_staging_instance_class
   allocated_storage       = var.rds_allocated_storage
   max_allocated_storage   = var.rds_max_allocated_storage
@@ -105,6 +108,7 @@ module "rds_staging" {
 
   deletion_protection = var.rds_deletion_protection
   skip_final_snapshot = var.rds_skip_final_snapshot
+  enable_blue_green_update = false
 
   tags = {
     Environment = "staging"

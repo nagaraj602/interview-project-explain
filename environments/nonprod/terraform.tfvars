@@ -8,9 +8,9 @@ private_subnet_cidrs  = ["10.10.11.0/24", "10.10.12.0/24", "10.10.13.0/24"]
 database_subnet_cidrs = ["10.10.21.0/24", "10.10.22.0/24", "10.10.23.0/24"]
 single_nat_gateway    = true
 
-# Consolidated EKS Settings (Kubernetes 1.35 on Spot Instances for ~70% EC2 savings)
+# Consolidated EKS Settings (Kubernetes 1.36 on Spot Instances for ~70% EC2 savings)
 cluster_name       = "nonprod-risk-eks"
-kubernetes_version = "1.35"
+kubernetes_version = "1.36"
 eks_instance_types = ["m6i.large"]
 eks_capacity_type  = "SPOT"
 eks_desired_size   = 2
@@ -19,6 +19,7 @@ eks_max_size       = 8
 
 # Dev Database (Cost-optimized Single-AZ ARM Graviton)
 rds_dev_instance_class = "db.t4g.medium"
+rds_engine_version     = "16.5"
 
 # Staging Database (Performance testing Single-AZ ARM Graviton)
 rds_staging_instance_class = "db.t4g.large"

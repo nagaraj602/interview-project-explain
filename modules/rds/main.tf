@@ -236,6 +236,7 @@ resource "aws_db_instance" "main" {
   skip_final_snapshot         = var.skip_final_snapshot
   final_snapshot_identifier   = "${var.environment}-risk-db-final-snapshot"
   allow_major_version_upgrade = var.allow_major_version_upgrade
+  apply_immediately           = true
 
   # Native Terraform RDS Blue/Green Deployment (Zero-Downtime Major Upgrades)
   blue_green_update {

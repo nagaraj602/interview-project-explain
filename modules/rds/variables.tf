@@ -85,9 +85,9 @@ variable "allow_major_version_upgrade" {
 }
 
 variable "enable_blue_green_update" {
-  description = "Enables native Terraform/AWS RDS Blue/Green Deployment for zero-downtime upgrades."
+  description = "Enables native Terraform/AWS RDS Blue/Green Deployment (must be false when Secrets Manager manages master credentials)."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "tags" {
