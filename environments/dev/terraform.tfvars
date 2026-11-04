@@ -22,3 +22,5 @@ rds_multi_az              = false
 rds_allocated_storage     = 50
 rds_max_allocated_storage = 200
 backup_retention_period   = 14
+rds_deletion_protection   = false
+rds_skip_final_snapshot   = true

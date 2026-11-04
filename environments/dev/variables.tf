@@ -105,3 +105,15 @@ variable "backup_retention_period" {
   type        = number
   default     = 14
 }
+
+variable "rds_deletion_protection" {
+  description = "Enable deletion protection on RDS PostgreSQL (set to false for test teardown)."
+  type        = bool
+  default     = false
+}
+
+variable "rds_skip_final_snapshot" {
+  description = "Skip final snapshot on deletion (set to true for automated test teardown)."
+  type        = bool
+  default     = true
+}
